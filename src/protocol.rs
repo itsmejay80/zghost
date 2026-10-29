@@ -1,17 +1,3 @@
-//! Line-based wire protocol between the Zsh plugin and the daemon.
-//!
-//! Every message is one line of tab-separated fields. Fields escape `\`,
-//! newline and tab so Zsh can decode them with `${(g::)field}`.
-//!
-//! ```text
-//! S <id> <session> <cwd> <buffer>         -> <id> <candidate>...
-//! C <id> <session> <cwd> <cursor> <buffer>
-//!     -> <id> @<word-start>:<word-end> <cursor>:<candidate>...
-//! Completion offsets are character counts. The span also supports native-shell fallback.
-//! R <session> <cwd> <status> <command>    -> (no reply)
-//! P                                        -> PONG
-//! Q                                        -> (daemon exits)
-//! ```
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Request {
@@ -19,7 +5,6 @@ pub enum Request {
         id: String,
         session: String,
         cwd: String,
-        /// Character offset supplied by ZLE.
         cursor: usize,
         buffer: String,
     },

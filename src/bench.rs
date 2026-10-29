@@ -1,6 +1,3 @@
-//! Offline replay of a Zsh history file to measure suggestion quality and
-//! latency. Older commands train the index; the newest `test` commands are
-//! "typed" one character at a time and checked against the top suggestion.
 
 use crate::config::Config;
 use crate::engine::Engine;
@@ -19,7 +16,6 @@ pub fn run(histfile: &Path, test: usize) -> Result<()> {
     for (ts, cmd) in &entries[..split] {
         engine.record("bench", None, cmd, 0, *ts);
     }
-    // Baseline: zsh-autosuggestions' default strategy, most recent match.
     let mut recent: Vec<&str> = entries[..split].iter().map(|(_, c)| c.as_str()).collect();
     let (mut base_predicted, mut base_saved) = (0usize, 0usize);
 

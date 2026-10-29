@@ -55,7 +55,6 @@ fn main() {
     }
 }
 
-/// Remove `--name value` from `args` and return the value.
 fn opt(args: &mut Vec<String>, name: &str) -> Option<String> {
     let i = args.iter().position(|a| a == name)?;
     args.remove(i);
@@ -101,7 +100,6 @@ fn daemon(args: &mut Vec<String>) -> Result<()> {
     let socket = socket_path(args);
     let histfile = histfile(args);
     if !flag(args, "--foreground") {
-        // Detach from the terminal so closing the tab doesn't kill us.
         unsafe {
             libc::setsid();
             libc::signal(libc::SIGHUP, libc::SIG_IGN);

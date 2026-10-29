@@ -11,15 +11,10 @@ pub struct Entry {
     pub count: u32,
     pub failures: u32,
     pub last_used: i64,
-    /// Position in the command stream when last used (0 = unknown). Imported
-    /// history often shares one timestamp, so order is the better recency.
     pub last_seq: u64,
-    /// Directory -> times used there.
     pub dirs: HashMap<String, u32>,
 }
 
-/// The part of a command that predicts what comes next: the command word
-/// plus its subcommand. `git commit -m "fix"` -> `git commit`, `ls -la` -> `ls`.
 pub fn shape(cmd: &str) -> String {
     let line = parser::parse(cmd);
     let Some(i) = line.command else {
@@ -39,21 +34,15 @@ pub fn shape(cmd: &str) -> String {
     out
 }
 
-/// In-memory command history, ordered so prefix lookups are a range scan.
 #[derive(Debug, Default)]
 pub struct HistoryIndex {
     entries: BTreeMap<String, Entry>,
-    /// prev command -> next command -> count.
     transitions: HashMap<String, HashMap<String, u32>>,
-    /// Same, keyed by `shape`, so `git commit -m "anything"` teaches that
-    /// `git push` usually follows any commit.
     shapes: HashMap<String, HashMap<String, u32>>,
     shape_of: HashMap<String, String>,
-    /// Commands recorded so far; the next one gets `seq + 1`.
     seq: u64,
 }
 
-/// What the previous command says about the next one, looked up once per query.
 struct Sequence<'a> {
     exact: Option<&'a HashMap<String, u32>>,
     exact_total: u32,
@@ -89,7 +78,6 @@ impl HistoryIndex {
         seq
     }
 
-    /// Restore an aggregated row (used when loading from the store).
     pub fn load_entry(&mut self, cmd: String, entry: Entry) {
         self.seq = self.seq.max(entry.last_seq);
         self.shape_of(&cmd);
@@ -153,14 +141,11 @@ impl HistoryIndex {
         }
     }
 
-    /// Share of times the exact previous line was followed by `cmd`.
     fn exact_probability(&self, cmd: &str, seq: &Sequence) -> f64 {
         let n = seq.exact.and_then(|m| m.get(cmd)).copied().unwrap_or(0);
         n as f64 / (seq.exact_total as f64 + 1.0)
     }
 
-    /// How strongly the previous command predicts `cmd`, in `0.0..1.0`:
-    /// the share of times `cmd`'s shape followed the previous shape.
     fn shape_probability(&self, cmd: &str, seq: &Sequence) -> f64 {
         let n = seq
             .shapes
@@ -168,11 +153,9 @@ impl HistoryIndex {
             .and_then(|(m, s)| m.get(s))
             .copied()
             .unwrap_or(0);
-        // +1 smoothing so a single observation isn't taken as certainty.
         n as f64 / (seq.shape_total as f64 + 1.0)
     }
 
-    /// Unbounded relevance score; higher is better.
     fn raw_score(
         &self,
         cmd: &str,
@@ -209,8 +192,6 @@ impl HistoryIndex {
 pub struct HistorySource {
     index: Arc<RwLock<HistoryIndex>>,
     config: HistoryConfig,
-    /// Drop `cd` lines whose target is missing. Off for `bench`, where the
-    /// working directory isn't known.
     check_dirs: bool,
 }
 
@@ -261,7 +242,6 @@ impl SuggestionSource for HistorySource {
         };
 
         push(&ctx.buffer, 1.0);
-        // `cd api && git pu` should still find `git push` on its own.
         let seg = ctx.line.segment_start();
         if seg > 0 && seg < ctx.buffer.len() {
             push(&ctx.buffer[seg..], 0.8);
@@ -276,15 +256,12 @@ impl SuggestionSource for HistorySource {
 }
 
 impl HistorySource {
-    /// Empty prompt: suggest the next command, Warp style, but only when the
-    /// previous command makes it a confident guess.
     fn predict_next(&self, index: &HistoryIndex, seq: &Sequence, ctx: &Context) -> Vec<Suggestion> {
         let min_obs = self.config.next_min_observations;
         let min_p = self.config.next_min_probability;
         if seq.shape_total < min_obs {
             return Vec::new();
         }
-        // Either the exact previous line or its shape must point here.
         let confident = |cmd: &str| {
             (seq.exact_total >= min_obs && index.exact_probability(cmd, seq) >= min_p)
                 || index.shape_probability(cmd, seq) >= min_p
@@ -310,14 +287,11 @@ impl HistorySource {
     }
 }
 
-/// A `cd` line from history is only useful if its target exists from the
-/// current directory (`cd src/api` typed in `~` is noise inside a project).
 fn cd_target_exists(text: &str, cwd: &Path) -> bool {
     let line = parser::parse(text);
     if !matches!(line.command(), Some("cd" | "pushd")) {
         return true;
     }
-    // `cd a b` is almost always a typo like `cd git checkout dev`.
     if !line.positionals().is_empty() {
         return false;
     }
@@ -332,7 +306,7 @@ fn cd_target_exists(text: &str, cwd: &Path) -> bool {
                 .unwrap_or_default();
             home.join(rest.trim_start_matches('/'))
         }
-        Some(_) => return true, // ~user or named directory: can't resolve here.
+        Some(_) => return true,
         None => cwd.join(target),
     };
     path.is_dir()
@@ -428,7 +402,7 @@ mod tests {
         assert_eq!(top(&src, "cd ", cwd, None).as_deref(), Some("cd api"));
         assert_eq!(top(&src, "cd D", cwd, None), None);
         assert_eq!(top(&src, "cd g", cwd, None), None);
-        assert_eq!(top(&src, "cd ~", cwd, None), None); // nothing longer than the buffer
+        assert_eq!(top(&src, "cd ~", cwd, None), None);
     }
 
     #[test]
@@ -444,7 +418,6 @@ mod tests {
     fn learns_what_follows_a_kind_of_command() {
         let now = 1_700_000_000;
         let mut idx = HistoryIndex::default();
-        // Every commit message is different, but a push always follows.
         for i in 0..5 {
             let commit = format!("git commit -m 'change {i}'");
             idx.record("git add .", None, now, true, None);
@@ -462,15 +435,12 @@ mod tests {
             top(&src, "git", "/", Some("git add src/")).as_deref(),
             Some("git commit -m 'change 4'")
         );
-        // No confident guess for an empty prompt without a known pattern.
         assert_eq!(top(&src, "", "/", Some("make")), None);
         assert_eq!(top(&src, "", "/", None), None);
     }
 
     #[test]
     fn predicts_from_the_exact_previous_line() {
-        // After `git checkout dev` you pull, though checkouts in general are
-        // followed by many different things.
         let now = 1_700_000_000;
         let mut idx = HistoryIndex::default();
         for i in 0..4 {
@@ -489,7 +459,6 @@ mod tests {
 
     #[test]
     fn prefers_what_was_run_a_few_commands_ago() {
-        // Imported history often shares one timestamp; order still counts.
         let now = 1_700_000_000;
         let mut idx = HistoryIndex::default();
         for _ in 0..3 {

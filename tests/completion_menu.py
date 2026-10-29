@@ -138,7 +138,7 @@ _capture
         self.send("\x1b[D" * len("XX --draft"))
         at = len("echo é && gh pr cr")
         self.wait(lambda s: len(s)>1 and int(s[1].split(":")[0]) == at)
-        self.send("\x00")  # Ctrl-Space
+        self.send("\x00")
         self.wait(lambda s: len(s)>1 and s[1].split(":")[1] == "2")
         self.send("\r")
         state = self.wait(lambda s: s and s[0] == "echo é && gh pr create --draft")
@@ -182,7 +182,6 @@ _capture
 
     def test_unchanged_redraw_does_not_reprint_menu(self):
         self.menu("gh pr c")
-        # Drain the initial menu output before exercising repeated ZLE hooks.
         self.read()
         footer = "select · Enter/Tab insert".encode()
         before = self.log.count(footer)

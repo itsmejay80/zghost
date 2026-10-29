@@ -4,8 +4,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
-/// Names defined by project files: package.json scripts, Makefile targets
-/// and docker compose services. Parsed results are cached by file mtime.
 #[derive(Default)]
 pub struct ProjectSource {
     cache: Mutex<Cache<(SystemTime, Arc<Vec<String>>)>>,
@@ -43,7 +41,6 @@ impl ProjectSource {
     }
 }
 
-/// Walk up from `cwd` looking for the first of `names`.
 fn find_up(cwd: &Path, names: &[&str]) -> Option<PathBuf> {
     cwd.ancestors()
         .flat_map(|d| names.iter().map(move |n| d.join(n)))
@@ -82,7 +79,6 @@ fn make_targets(text: &str) -> Vec<String> {
     out
 }
 
-/// Minimal YAML reading: keys one indent level below a top-level `services:`.
 fn compose_services(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut in_services = false;
@@ -191,7 +187,6 @@ mod tests {
         std::fs::write(&file, r#"{"scripts":{"dev":"x"}}"#).unwrap();
         let names = src.names(&file, Kind::PackageScripts);
         assert!(Arc::ptr_eq(&names, &src.names(&file, Kind::PackageScripts)));
-        // Force a stale timestamp without relying on filesystem clock resolution.
         src.cache
             .lock()
             .unwrap()

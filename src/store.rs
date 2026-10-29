@@ -1,4 +1,3 @@
-//! SQLite persistence for aggregated history, plus Zsh history import.
 
 use crate::sources::{Entry, HistoryIndex};
 use crate::Result;
@@ -15,7 +14,6 @@ pub struct Record<'a> {
     pub ts: i64,
     pub success: bool,
     pub prev: Option<&'a str>,
-    /// Position in the command stream (see `Entry::last_seq`).
     pub seq: u64,
 }
 
@@ -135,10 +133,7 @@ impl Store {
     }
 }
 
-/// Parse a Zsh history file (plain or `EXTENDED_HISTORY`) into
-/// `(timestamp, command)` pairs, oldest first.
 pub fn parse_zsh_history(bytes: &[u8]) -> Vec<(i64, String)> {
-    // Zsh "metafies" bytes >= 0x83: they are stored as 0x83, byte ^ 0x20.
     let mut raw = Vec::with_capacity(bytes.len());
     let mut it = bytes.iter();
     while let Some(&b) = it.next() {
@@ -205,7 +200,6 @@ mod tests {
 
     #[test]
     fn unmetafies_non_ascii() {
-        // "é" is C3 A9; zsh writes A9 as 0x83 0x89.
         let h = parse_zsh_history(&[b'e', b'c', b'h', b'o', b' ', 0xC3, 0x83, 0x89, b'\n']);
         assert_eq!(h[0].1, "echo é");
     }

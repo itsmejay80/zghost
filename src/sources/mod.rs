@@ -1,5 +1,3 @@
-//! Suggestion sources. Each one looks at the line being typed and proposes
-//! complete buffers; the engine merges and ranks them.
 
 mod cache;
 mod git;
@@ -19,21 +17,16 @@ use std::path::PathBuf;
 
 pub struct Context {
     pub buffer: String,
-    /// Explicit completions may replace the current word; ghost text may only append.
     pub fuzzy: bool,
     pub cwd: PathBuf,
-    /// The command this shell session ran last, if known.
     pub prev_command: Option<String>,
-    /// Unix time in seconds.
     pub now: i64,
     pub line: ParsedLine,
 }
 
 #[derive(Debug, Clone)]
 pub struct Suggestion {
-    /// The full buffer after accepting. Inline candidates always extend the buffer.
     pub text: String,
-    /// Confidence in `0.0..1.0`.
     pub score: f64,
     pub source: &'static str,
 }
@@ -42,22 +35,16 @@ pub trait SuggestionSource: Send + Sync {
     fn name(&self) -> &'static str;
     fn suggest(&self, ctx: &Context) -> Vec<Suggestion>;
 
-    /// Adapt another source's full-line candidate to the current context
-    /// (e.g. swap a remembered branch for the current one).
     fn rewrite(&self, _ctx: &Context, _text: &str) -> Option<String> {
         None
     }
 
-    /// Veto another source's full-line candidate that can't work here
-    /// (e.g. checking out a branch this repo doesn't have).
     fn rejects(&self, _ctx: &Context, _text: &str) -> bool {
         false
     }
 }
 
 impl Context {
-    /// Complete the word under the cursor to `value` (escaped) plus `suffix`.
-    /// Menu completion can replace a fuzzy-matched word; inline completion only appends.
     pub fn complete_word(&self, value: &str, suffix: &str) -> Option<String> {
         let raw = &self.line.current().raw;
         let mut word = if raw.starts_with('\'') {
@@ -88,7 +75,6 @@ impl Context {
         }
     }
 
-    /// Helper for sources that rank a list of word completions in order.
     pub fn ranked_words<'a>(
         &self,
         values: impl IntoIterator<Item = &'a str>,
@@ -126,7 +112,6 @@ pub(crate) fn test_context(buffer: &str, cwd: &std::path::Path) -> Context {
     }
 }
 
-/// Case-insensitive subsequence matching, plus a single typo for words of 3+ chars.
 pub(crate) fn matches_word(query: &str, value: &str) -> bool {
     if query.chars().count() > 256 || value.chars().count() > 1024 {
         return value.starts_with(query);
@@ -145,7 +130,6 @@ pub(crate) fn matches_word(query: &str, value: &str) -> bool {
     if q.len() < 3 {
         return false;
     }
-    // Compare against prefixes too: `chek` can discover `checkout`.
     let mut row: Vec<usize> = (0..=v.len()).collect();
     let mut next = vec![0; v.len() + 1];
     for (i, a) in q.iter().enumerate() {
