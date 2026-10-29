@@ -48,7 +48,6 @@ pub struct HistoryIndex {
     /// Same, keyed by `shape`, so `git commit -m "anything"` teaches that
     /// `git push` usually follows any commit.
     shapes: HashMap<String, HashMap<String, u32>>,
-    /// Command -> its shape, cached.
     shape_of: HashMap<String, String>,
     /// Commands recorded so far; the next one gets `seq + 1`.
     seq: u64,

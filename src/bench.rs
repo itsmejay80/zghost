@@ -27,7 +27,6 @@ pub fn run(histfile: &Path, test: usize) -> Result<()> {
     let mut latencies: Vec<Duration> = Vec::new();
     let (mut predicted, mut within3, mut total_chars, mut saved_chars) =
         (0usize, 0usize, 0usize, 0usize);
-    // Empty-prompt predictions: how many were shown, and how many were right.
     let (mut next_shown, mut next_right) = (0usize, 0usize);
     for (ts, cmd) in &entries[split..] {
         total_chars += cmd.len();

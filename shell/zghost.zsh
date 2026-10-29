@@ -82,7 +82,6 @@ _zghost_clear_highlight() {
   _zghost_highlight=
 }
 
-# Draw the selected candidate as ghost text after the cursor.
 _zghost_render() {
   _zghost_clear_highlight
   local s=$_zghost_candidates[_zghost_index]
