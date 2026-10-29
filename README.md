@@ -1,201 +1,181 @@
 # zghost
 
-Warp-style inline autosuggestions for Zsh, powered by a Rust daemon. You keep
-your terminal and your shell. zghost adds ranked, context-aware ghost text as
-you type.
+**Context-aware autosuggestions and completions for Zsh, powered by Rust.**
 
-```
-$ git che|ckout feature/login        <- grey text is the suggestion
-```
-
-## Install
-
-```sh
-cargo install --path .
-echo 'eval "$(zghost init zsh)"' >> ~/.zshrc
-```
-
-The first keystroke in a new shell starts the daemon automatically. On the
-first start it imports your existing `$HISTFILE` once.
-
-Do not load `zsh-autosuggestions` at the same time: both plugins draw into
-`POSTDISPLAY`.
-
-## Keys
-
-| Key                         | Action                                           |
-| --------------------------- | ------------------------------------------------ |
-| `↑` / `↓`                  | Browse older / newer commands in Zsh history      |
-| `→`, `Ctrl-F`               | Accept the whole suggestion (else move right)    |
-| `End`, `Ctrl-E`             | Accept the whole suggestion (else end of line)   |
-| `Alt-F`                     | Accept the next word                             |
-| `Alt-N` / `Alt-P`           | Cycle through ranked alternatives                |
-| `Tab`, `Ctrl-Space`          | Open the ranked completion menu                 |
-| `↑` / `↓` in the menu       | Select the previous / next candidate            |
-| `Enter`, `Tab` in the menu   | Insert the selected candidate without executing |
-| `Esc` in the menu           | Dismiss suggestions                             |
-| `Ctrl-X Tab`                | Invoke your original Zsh completion widget      |
-
-Set `ZGHOST_NO_BINDINGS=1` before the `eval` to bind the widgets yourself
-(`zghost-accept`, `zghost-accept-end`, `zghost-accept-word`, `zghost-next`,
-`zghost-prev`, `zghost-tab`, `zghost-complete`). Set `ZGHOST_TAB_ACCEPT=1` to make Tab accept the
-ghost text when one is shown, Warp style. Set `ZGHOST_HIGHLIGHT` (default
-`fg=8`) to restyle the ghost text.
-
-Set `ZGHOST_MENU_AUTO=1` before loading to open the menu while typing.
-Typing edits the draft; the menu never executes a command on acceptance.
-Automatic menus use built-in sources only. Explicit Tab/Ctrl-Space requests
-also fetch native Zsh candidates when the built-in sources return none.
-Native completion requires your usual `compinit` setup; if the adapter has
-no candidates, the original completion widget remains the fallback.
-
-## Completion discovery
-
-Suggestions work before you know the first argument character: `git checkout `
-offers branches, `npm run ` offers scripts, and `cat ` offers local paths.
-Built-in command metadata supplies subcommands, flags, path-valued options,
-and enumerated values without needing prior history. For example:
+Get Warp-style ghost text in your existing terminal. zghost combines your command
+history with Git context, project scripts, local files, and built-in command
+metadata to suggest what to type next.
 
 ```text
-cargo build --r             → cargo build --release
-gh pr c                    → gh pr create
-terraform pl               → terraform plan
-kubectl get --output=      → kubectl get --output=yaml
+$ git che│ckout feature/login
+         └─ suggested text; press → to accept
 ```
 
-The catalog includes Git, Cargo, Docker/Compose, npm/pnpm/yarn/bun, kubectl,
-Homebrew, Go, gh, Terraform, SSH/SCP/rsync, curl, rg, find, Python/pip, uv,
-Poetry, rustup, Helm, AWS, gcloud, just and CMake. It covers common syntax;
-installed Zsh completion functions provide additional coverage on demand.
-There is no built-in alias expansion or alias-aware dispatch.
+[Quick start](#quick-start) · [Key bindings](#key-bindings) ·
+[Configuration](#configuration) · [Development](#development)
 
-Inline ghost text always extends what you typed. The explicit menu also
-supports case-insensitive subsequences and one-character typos, so `git chek`
-can discover `git checkout`. Prefix matches rank ahead of fuzzy matches.
-Selecting a menu candidate replaces the word at the cursor, retaining later
-arguments. Quoted file paths and spaces are escaped for insertion.
+## What it does
 
-After upgrading, run `zghost stop` and reload your shell so the daemon and
-plugin both use the updated completion protocol.
+- **Learns from your history.** Ranks commands by frequency, recency, working
+  directory, previous commands, and exit status.
+- **Understands your project.** Suggests Git branches and remotes, package
+  scripts, Makefile targets, and Docker Compose services.
+- **Helps discover commands.** Offers subcommands, flags, option values, files,
+  and executables without requiring prior history.
+- **Supports fuzzy completion.** The completion menu handles subsequences and
+  one-character typos, while inline suggestions always extend what you typed.
+- **Predicts your next command.** Learns patterns such as pushing after a commit
+  and adapts remembered pushes to the current branch.
+- **Works locally.** Uses a Rust daemon, a Unix socket, and a SQLite history
+  database. No AI service or API key is required.
 
-## Next-command prediction
+## Quick start
 
-zghost learns which kind of command usually follows another. It groups
-commands by shape (the command plus its subcommand), so every
-`git commit -m "..."` counts as `git commit`, even though each message is
-different. If you usually push after committing, then after a commit:
+### Requirements
 
-```
-$ git| push origin feature/login     <- typing `git` suggests the push
-$ |git push origin feature/login     <- an empty prompt suggests it too
-```
+- A Unix-like environment with Zsh and its `zsh/net/socket`, `zsh/zselect`,
+  `zsh/datetime`, and `zsh/zutil` modules.
+- Rust and Cargo, plus a C compiler to build the bundled SQLite dependency.
+- Git to clone this repository and use Git-aware suggestions.
 
-The empty-prompt suggestion only appears when the pattern is strong, judged by the exact previous line (`git checkout dev` -> `git pull`) or its shape. Accept
-it with `→` like any other suggestion. Set `ZGHOST_NO_PREDICT=1` to turn it
-off. A remembered `git push [-u] <remote> <branch>` is rewritten to the
-branch you have checked out.
+### 1. Install from source
 
-## Architecture
-
-```mermaid
-flowchart TD
-    A["User types in Zsh"] --> B["ZLE plugin (shell/zghost.zsh)"]
-    B -- "Unix socket, async via zle -F" --> C["Rust daemon"]
-    C --> D["Command parser"]
-    D --> E["Suggestion sources"]
-    E --> F["History (SQLite + in-memory index)"]
-    E --> G["Git branches / remotes"]
-    E --> H["Project: package.json, Makefile, compose"]
-    E --> I["Command specs"]
-    E --> J["Files and $PATH executables"]
-    F & G & H & I & J --> K["Ranking (noisy-OR merge)"]
-    K --> B
+```sh
+git clone https://github.com/itsmejay80/zghost.git
+cd zghost
+cargo install --path .
 ```
 
-* **Plugin** (`shell/zghost.zsh`). A `line-pre-redraw` hook sends the buffer
-  whenever it changes. Replies arrive through `zle -F` and are drawn into
-  `POSTDISPLAY` with `region_highlight`, so typing never blocks on the daemon.
-  Every request carries an id, and stale replies are dropped. Candidates that
-  still match are kept between keystrokes, so ghost text doesn't flicker.
-  `precmd` reports each finished command with its directory and exit status.
-* **Daemon** (`src/daemon.rs`). One persistent connection per shell, one
-  thread each. The socket is created with umask `077` (owner only), because it
-  exposes your history.
-* **Parser** (`src/parser.rs`). A small lexer that handles quotes, escapes,
-  `|`/`&&`/`;` segments and `sudo`/`env`/`FOO=bar` prefixes. It finds the
-  command and the word under the cursor.
-* **Sources** (`src/sources/`). Each one implements:
+Make sure Cargo's binary directory, usually `~/.cargo/bin`, is on your `PATH`.
 
-  ```rust
-  pub trait SuggestionSource: Send + Sync {
-      fn name(&self) -> &'static str;
-      fn suggest(&self, ctx: &Context) -> Vec<Suggestion>;
-  }
-  ```
+### 2. Enable it in Zsh
 
-  | Source        | What it suggests                                                         |
-  | ------------- | ------------------------------------------------------------------------ |
-  | `history`     | Full lines, scored by frequency, recency (by time and by command order), directory, what usually follows the previous command, and failure rate |
-  | `git`         | Branches (most recent first) and tags for checkout/switch/merge/..., and remotes for push/pull. Rewrites remembered pushes to the current branch and drops remembered checkouts of refs this repo does not have |
-  | `project`     | `npm/pnpm/yarn/bun run` scripts, `make` targets, `docker compose` services |
-  | `specs`       | Subcommands, flags, option values and argument metadata for common CLIs |
-  | `files`       | Paths for path-like words and file-taking commands (dirs only for `cd`)  |
-  | `executables` | Commands on `$PATH` while typing the command word                        |
+Add this line to `~/.zshrc`, after your shell framework and completion setup:
 
-  Sources can also implement `rewrite` to adapt another source's line to
-  the current context.
-
-* **Ranking** (`src/engine.rs`). Source confidences are combined with
-  noisy-OR, so sources that agree reinforce each other. A history line that
-  extends a context completion (`git log` → `git log --oneline`) inherits that
-  completion's support.
-
-## Measuring quality
-
-`zghost bench` replays your history file. Older commands train the index, and
-the newest N are "typed" one character at a time. It also reports the
-zsh-autosuggestions strategy (most recent match) as a baseline. It also
-reports how often the empty-prompt prediction is shown and exactly right.
-
-Results on this machine's history (≈4,900 commands, history source only):
-
-| Test set | zghost keystrokes saved | Baseline | zghost predicted | Baseline | p99 latency |
-| -------- | ----------------------- | -------- | ---------------- | -------- | ----------- |
-| last 1000 | **48.5%** | 45.8% | **75.6%** | 74.1% | ~135 µs |
-| last 2500 | **42.3%** | 39.7% | **72.7%** | 71.0% | |
-
-The benchmark can't measure the directory boost, the context sources, or the
-branch rewrite, because Zsh history files don't record the working directory
-or branch. It also skips the `cd` target check for the same reason. The daemon
-learns directories from live use. That's why the empty-prompt line looks low
-in the benchmark: the guessed command shape is right about 70% of the time,
-but most misses are `git push origin <branch>` with a different branch, which
-the live rewrite fixes. Right now it shows on about 23% of prompts and is exactly right 44% of the time.
-
-## Commands
-
+```zsh
+eval "$(zghost init zsh)"
 ```
-zghost init zsh                     print the plugin (eval it in .zshrc)
-zghost daemon [--foreground]        run the daemon (normally auto-started)
-zghost suggest [--cwd D] [--after CMD] <buffer>
-                                    one-shot ranked suggestions, with sources and timing;
-                                    --after pretends CMD just ran ('' asks for a next-command guess)
-zghost complete [--cwd D] [--cursor N] [--limit N] <buffer>
-                                    explicit fuzzy completions; N is a character offset;
-                                    prints insertion cursor and completed buffer
-zghost bench [--test N]             replay history and score suggestion quality
-zghost import [--histfile F]        one-time history import (also done on first start)
-zghost status | stop                ping or stop the daemon
+
+Open a new terminal or reload your configuration:
+
+```zsh
+source ~/.zshrc
 ```
+
+The daemon starts automatically when suggestions are first requested and imports
+your existing `$HISTFILE` once. If `HISTFILE` is unset, it uses `~/.zsh_history`.
+
+> Disable `zsh-autosuggestions` before enabling zghost. Both plugins use Zsh's
+> `POSTDISPLAY` to draw ghost text.
+
+### 3. Try it
+
+Type one of these commands, including the trailing space, to discover candidates:
+
+```text
+git checkout     → branches
+npm run          → package scripts
+cat              → local files
+```
+
+Press **Tab** to open the ranked completion menu, or **→** to accept inline ghost
+text. Accepting a menu candidate inserts text without executing the command.
+
+## Key bindings
+
+| Key | Action |
+| --- | --- |
+| `↑` / `↓` | Browse older / newer commands in Zsh history |
+| `→`, `Ctrl-F` | Accept the whole inline suggestion, or move right |
+| `End`, `Ctrl-E` | Accept the whole inline suggestion, or move to the end |
+| `Alt-F` | Accept the next word |
+| `Alt-N` / `Alt-P` | Cycle through ranked alternatives |
+| `Tab`, `Ctrl-Space` | Open the ranked completion menu |
+| `↑` / `↓` in the menu | Select the previous / next candidate |
+| `Enter`, `Tab` in the menu | Insert the selected candidate |
+| `Esc` in the menu | Dismiss the menu |
+| `Ctrl-X Tab` | Invoke your original Zsh completion widget |
+
+The `Ctrl-F` and `Alt-*` bindings are installed in the Emacs keymap. Arrow, End,
+and menu-opening bindings are also installed in the Vi insert keymap.
+
+## Suggestions in practice
+
+### Discover commands and arguments
+
+Built-in metadata covers common CLI syntax, including Git, Cargo, Docker/Compose,
+npm/pnpm/yarn/bun, kubectl, Homebrew, Go, gh, Terraform, SSH/SCP/rsync, curl, rg,
+find, Python/pip, uv, Poetry, rustup, Helm, AWS, gcloud, just, and CMake.
+
+```text
+cargo build --r        → cargo build --release
+gh pr c                → gh pr create
+terraform pl           → terraform plan
+kubectl get --output=  → kubectl get --output=yaml
+```
+
+Explicit Tab/Ctrl-Space requests also try native Zsh completions when built-in
+sources return no candidates. This requires your usual `compinit` setup. If the
+adapter finds nothing, zghost falls back to your original completion widget.
+
+The explicit menu can turn `git chek` into `git checkout`. Prefix matches rank
+before fuzzy matches. Selecting a candidate replaces the word at the cursor,
+preserves later arguments, and escapes file paths for shell insertion.
+
+### Predict what comes next
+
+zghost groups commands by their command and subcommand: different
+`git commit -m "..."` commands all teach the same `git commit` pattern. If a push
+usually follows a commit, zghost can suggest it from a short prefix or an empty
+prompt.
+
+Empty-prompt suggestions require a sufficiently strong pattern from the exact
+previous command or its command shape. A remembered
+`git push [-u] <remote> <branch>` is adapted to the branch currently checked out.
 
 ## Configuration
 
-`~/.config/zghost/config.json` (every field is optional):
+### Shell options
+
+Set these **before** the `eval` line in `~/.zshrc`:
+
+| Variable | Effect |
+| --- | --- |
+| `ZGHOST_NO_PREDICT=1` | Disable suggestions on an empty prompt |
+| `ZGHOST_TAB_ACCEPT=1` | Make Tab accept inline ghost text when present |
+| `ZGHOST_MENU_AUTO=1` | Open the completion menu while typing |
+| `ZGHOST_HIGHLIGHT='fg=8'` | Set the ghost-text style; `fg=8` is the default |
+| `ZGHOST_NO_BINDINGS=1` | Skip default bindings and bind widgets yourself |
+
+For example:
+
+```zsh
+ZGHOST_NO_PREDICT=1
+ZGHOST_HIGHLIGHT='fg=8'
+eval "$(zghost init zsh)"
+```
+
+Automatic menus use built-in sources only; native Zsh completions run on explicit
+invocation. To bind your own keys, use widgets such as `zghost-accept`,
+`zghost-accept-end`, `zghost-accept-word`, `zghost-next`, `zghost-prev`,
+`zghost-tab`, and `zghost-complete`.
+
+### Ranking and sources
+
+Create `~/.config/zghost/config.json` to override defaults. Every field is
+optional; for example:
 
 ```json
 {
   "max_suggestions": 5,
-  "weights": { "history": 1.0, "git": 1.0, "project": 1.0, "specs": 1.0, "files": 1.0, "executables": 1.0 },
+  "weights": {
+    "history": 1.0,
+    "git": 1.0,
+    "project": 1.0,
+    "specs": 1.0,
+    "files": 1.0,
+    "executables": 1.0
+  },
   "disabled_sources": [],
   "history": {
     "frequency_weight": 0.7,
@@ -215,22 +195,107 @@ zghost status | stop                ping or stop the daemon
 }
 ```
 
-Restart the daemon (`zghost stop`) after editing. Use `zghost bench` to check
-whether a change helps on your own history.
+Run `zghost stop` after changing the configuration. The daemon restarts on the
+next suggestion request. Use `zghost bench` to evaluate ranking changes against
+your own history.
 
-Data lives in `~/.local/share/zghost/history.db`. Commands that start with a
-space are never recorded.
+### Local data
 
-## Not done yet
+| File | Default location |
+| --- | --- |
+| Configuration | `~/.config/zghost/config.json` |
+| History database | `~/.local/share/zghost/history.db` |
+| Daemon socket | `$TMPDIR/zghost-<uid>.sock`, or `/tmp/zghost-<uid>.sock` |
 
-* **Full shell grammar.** The hand-written lexer handles common commands,
-  quoting and separators, but does not implement all Zsh expansions.
-* **Exhaustive CLI schemas.** Built-in specs cover common cases, not every
-  tool/version. Native completions run on explicit invocation, not per key.
-* **AI suggestions.** Adding one means adding another `SuggestionSource`. It
-  should stay opt-in and run off the keystroke path.
+`XDG_CONFIG_HOME` and `XDG_DATA_HOME` override the configuration and data base
+directories. The daemon socket is restricted to its owner. Commands beginning
+with a space are skipped when recording and importing history.
 
-## Development checks
+## Command reference
+
+```text
+zghost init zsh
+zghost daemon [--socket P] [--histfile F] [--foreground]
+zghost suggest [--cwd DIR] [--limit N] [--after CMD] <buffer...>
+zghost complete [--cwd DIR] [--cursor N] [--limit N] <buffer...>
+zghost bench [--histfile F] [--test N]
+zghost import [--histfile F]
+zghost status [--socket P]
+zghost stop [--socket P]
+```
+
+Inspect suggestions and completions directly:
+
+```sh
+zghost suggest 'git che'
+zghost suggest --after 'git commit -m "example"' ''
+zghost complete --cwd . 'cargo build --r'
+zghost status
+```
+
+`complete` uses a character offset for `--cursor` and prints the insertion cursor
+and completed buffer. `suggest` reports sources and timing. `import` performs the
+one-time history import normally handled at daemon startup.
+
+## Updating and troubleshooting
+
+To update an existing checkout:
+
+```sh
+git pull --ff-only
+cargo install --path . --force
+zghost stop
+```
+
+Then open a new shell so the plugin and daemon use the same protocol version.
+If the daemon is already stopped, the `stop` command may report that no daemon
+is running.
+
+| Problem | What to check |
+| --- | --- |
+| `zghost: command not found` | Ensure Cargo's binary directory is on `PATH`. |
+| Ghost text is missing or conflicting | Disable other autosuggestion plugins and load zghost after your shell framework. |
+| Native completions are missing | Initialize `compinit` before loading zghost, then request completions with Tab or Ctrl-Space. |
+| Suggestions seem stale after an update | Run `zghost stop` and open a new shell. |
+
+To uninstall, remove the initialization line from `~/.zshrc`, run `zghost stop`,
+and run `cargo uninstall zghost`. The local history database remains in the data
+directory listed above.
+
+## How it works
+
+```mermaid
+flowchart TD
+    A[Zsh buffer] --> B[ZLE plugin]
+    B <-->|Unix socket| C[Rust daemon]
+    C --> D[Parser and context]
+    D --> E[History]
+    D --> F[Git and project files]
+    D --> G[Command specs, paths and executables]
+    E & F & G --> H[Ranking]
+    H --> C
+```
+
+The [Zsh plugin](shell/zghost.zsh) sends buffer changes and receives replies
+asynchronously through `zle -F`. Request IDs let it discard stale replies. The
+[daemon](src/daemon.rs) maintains one connection and thread per shell.
+
+[Suggestion sources](src/sources/) propose candidates, and the
+[engine](src/engine.rs) combines their confidence scores so agreement raises a
+candidate's rank. The [history index](src/sources/history.rs) learns from commands,
+working directories, and exit statuses, with [SQLite persistence](src/store.rs).
+
+### Current limitations
+
+- The parser handles common quoting, escapes, and command separators, but does
+  not implement the full Zsh grammar or all expansions.
+- Built-in command specs cover common cases rather than every tool version.
+- Alias expansion and alias-aware dispatch are not implemented.
+- AI-generated suggestions are not implemented.
+
+## Development
+
+Run the Rust checks, build the binary, and exercise the Zsh integration:
 
 ```sh
 cargo test
@@ -240,18 +305,30 @@ python3 tests/history_navigation.py
 python3 tests/completion_menu.py
 ```
 
-The shell tests use isolated PTYs, history/config directories and a test
-daemon; they do not load your shell configuration or command history.
+The Python tests require Python 3 and Zsh. They use isolated PTYs, configuration,
+history files, and a test daemon without loading your personal shell setup.
 
-To measure source latency and allocation traffic with an isolated, synthetic
-1,500-file fixture (without reading your history):
+### Measure suggestion quality
+
+```sh
+zghost bench --test 1000
+```
+
+The benchmark trains on older history and replays the newest commands one
+character at a time. It reports keystrokes saved, prediction quality, latency,
+and a most-recent-match baseline similar to `zsh-autosuggestions`.
+
+Results depend on your history. History-file replay cannot measure directory
+boosts, project sources, or live branch rewriting because Zsh history does not
+record that context. It also skips checking whether historical `cd` targets exist.
+
+### Measure source performance
 
 ```sh
 cargo run --release --example performance
 ```
 
-This reports allocated bytes per query, not resident memory. Executable and
-Git/project cache hits share their stored lists. Git and project caches each
-retain at most 64 recently used locations, reloading evicted data on demand;
-Git's three-second TTL and project-file mtime checks still apply. Learned
-history is retained in full, so total memory still depends on history size.
+This probe uses an isolated, synthetic 1,500-file fixture without reading your
+history. It reports latency and allocated bytes per query, rather than resident
+memory. Git and project caches retain up to 64 recently used locations each;
+learned history is retained in full, so total memory depends on history size.
