@@ -1,8 +1,14 @@
+# zghost: inline autosuggestions for Zsh, backed by a Rust daemon.
+# Load with:  eval "$(zghost init zsh)"
+#
+# Typing streams the buffer to the daemon over a Unix socket; replies arrive
+# asynchronously through `zle -F` and are drawn as ghost text in POSTDISPLAY.
 
 [[ -o interactive ]] || return 0
 zmodload zsh/net/socket zsh/zselect zsh/datetime zsh/zutil 2>/dev/null || return 0
 autoload -Uz add-zle-hook-widget add-zsh-hook
 
+# Re-sourcing .zshrc: drop the previous connection before resetting state.
 (( $+functions[_zghost_disconnect] )) && _zghost_disconnect
 
 typeset -g ZGHOST_BIN=${ZGHOST_BIN:-__ZGHOST_BIN__}
@@ -17,6 +23,7 @@ typeset -gi _zghost_menu=0 _zghost_menu_native=0 _zghost_menu_cursor=0 _zghost_w
 typeset -g _zghost_menu_buffer= _zghost_keymap=emacs _zghost_request_kind=S
 
 
+# Escape \, newline and tab; the daemon's protocol is one line per message.
 _zghost_encode() { REPLY=${${${1//\\/\\\\}//$'\n'/\\n}//$'\t'/\\t} }
 
 _zghost_disconnect() {
@@ -57,6 +64,8 @@ _zghost_request() {
   _zghost_send "S"$'\t'$(( ++_zghost_req ))$'\t'$$$'\t'$cwd$'\t'$REPLY
 }
 
+# zsh shifts region_highlight offsets as text is inserted, so our entry can't
+# be found by its exact text later. On zsh >= 5.9 tag it with memo= instead.
 autoload -Uz is-at-least
 if is-at-least 5.9; then
   typeset -g _zghost_memo=",memo=zghost"
@@ -85,6 +94,7 @@ _zghost_render() {
   fi
 }
 
+# Called by `zle -F` when the daemon replies: "<id>\t<candidate>...".
 _zghost-response() {
   local line
   if [[ -n $2 ]] || ! IFS= read -r -u $1 line; then
@@ -112,6 +122,7 @@ _zghost-response() {
       _zghost_candidate_cursors+=("${decoded%%:*}")
       _zghost_candidates+=("${decoded#*:}")
     done
+    # Native completion functions run only on explicit invocation, never per key.
     if (( $#_zghost_candidates == 0 && _zghost_menu_native )) && (( $+functions[_main_complete] )); then
       zle zghost-native-collect
     fi
@@ -134,6 +145,8 @@ _zghost-response() {
   zle -R
 }
 
+# Ask about any text, and about an empty prompt (next-command prediction)
+# unless ZGHOST_NO_PREDICT is set.
 _zghost_wants() {
   [[ -n ${BUFFER//[[:space:]]/} ]] || [[ -z $BUFFER && -z $ZGHOST_NO_PREDICT ]]
 }
@@ -144,6 +157,7 @@ _zghost_pre_redraw() {
   fi
   if [[ $BUFFER != "$_zghost_last_buffer" ]]; then
     _zghost_last_buffer=$BUFFER
+    # Keep candidates that still fit so ghost text doesn't flicker while typing.
     _zghost_candidates=("${(@M)_zghost_candidates:#${(b)BUFFER}?*}")
     _zghost_index=1
     if _zghost_wants && (( PENDING == 0 )); then
@@ -157,6 +171,8 @@ _zghost_pre_redraw() {
   (( _zghost_menu == 2 )) && _zghost_menu_draw || _zghost_render
 }
 
+# A fresh prompt never changes the (empty) buffer, so ask here. precmd has
+# already reported the last command, so the daemon knows what came before.
 _zghost_line_init() {
   _zghost_last_buffer=$BUFFER
   _zghost_candidates=()
@@ -172,6 +188,7 @@ _zghost_line_finish() {
 }
 
 _zghost_accept_or() {
+  # POSTDISPLAY also contains transient menu rows while the menu is open.
   (( _zghost_menu )) && { zghost-menu-accept; return 0 }
   if [[ -n $POSTDISPLAY ]] && (( CURSOR == $#BUFFER )); then
     BUFFER+=$POSTDISPLAY
@@ -184,6 +201,7 @@ _zghost_accept_or() {
 zghost-accept() { _zghost_accept_or forward-char }
 zghost-accept-end() { _zghost_accept_or end-of-line }
 
+# With ZGHOST_TAB_ACCEPT=1, Tab accepts ghost text; otherwise it completes.
 zghost-tab() {
   if [[ -n $ZGHOST_TAB_ACCEPT && -n $POSTDISPLAY ]]; then
     zghost-accept
@@ -220,6 +238,8 @@ _zghost_cycle() {
 zghost-next() { _zghost_cycle 1 history-search-forward }
 zghost-prev() { _zghost_cycle -1 history-search-backward }
 
+# Explicit completions use a separate request: unlike ghost text, these can
+# replace a word (including in the middle of a command).
 _zghost_open_menu() {
   (( _zghost_menu )) && { zghost-menu-down; return 0 }
   _zghost_menu=1
@@ -250,16 +270,19 @@ _zghost_menu_draw() {
   local end=$(( begin + 7 ))
   (( end > $#_zghost_candidates )) && end=$#_zghost_candidates
   for (( i=begin; i<=end; i++ )); do
+    # (V) makes control characters visible instead of emitting terminal escapes.
     marker=" "
     (( i == _zghost_index )) && marker=">"
     lines+=("$marker ${(V)_zghost_candidates[i]}")
   done
   lines+=("[$_zghost_index/$#_zghost_candidates] ↑/↓ select · Enter/Tab insert · Esc close")
   _zghost_render
+  # Keep the menu in ZLE's transient display. `zle -M` prints persistent
+  # output, so calling it from redraw hooks leaves duplicate menus behind.
   POSTDISPLAY+=$'\n'"${(F)lines}"
 }
 zghost-menu-dismiss() {
-  (( ++_zghost_req ))
+  (( ++_zghost_req )) # Invalidate any outstanding inline/menu response.
   _zghost_menu=0
   _zghost_candidates=()
   _zghost_candidate_cursors=()
@@ -289,9 +312,13 @@ zghost-menu-type() {
   zle .self-insert
 }
 
+# Use compsys as an on-demand source when built-in sources have no candidates.
+# -A asks compadd for insertion strings without changing the line or listing.
 _zghost_native_complete() {
   local _zghost_native_saved_compadd=${functions[compadd]-}
   function compadd() {
+    # Completers use these output-array switches for their own intermediate
+    # queries. Leave those alone, or their filtering logic would be disrupted.
     local -a _zghost_native_visible_prefix=() _zghost_native_visible_suffix=() _zghost_native_hidden_prefix=() _zghost_native_hidden_suffix=()
     local -a _zghost_native_files=() _zghost_native_file_root=() _zghost_native_outputs=() _zghost_native_ignored=() _zghost_native_ignored_prefix=() _zghost_native_ignored_suffix=() _zghost_native_unmatched=()
     zparseopts -E P:=_zghost_native_visible_prefix S:=_zghost_native_visible_suffix p:=_zghost_native_hidden_prefix s:=_zghost_native_hidden_suffix \
@@ -344,6 +371,7 @@ _zghost_preexec() {
   _zghost_cmd_dir=$PWD
 }
 
+# Report the finished command and its exit status so ranking can learn.
 _zghost_precmd() {
   local st=$?
   if [[ -n $_zghost_cmd && $_zghost_cmd != ' '* ]]; then
@@ -382,12 +410,15 @@ add-zle-hook-widget line-init _zghost_line_init
 add-zle-hook-widget line-pre-redraw _zghost_pre_redraw
 add-zle-hook-widget line-finish _zghost_line_finish
 add-zsh-hook preexec _zghost_preexec
+# Run first so $? is still the command's exit status.
 precmd_functions=(_zghost_precmd ${precmd_functions:#_zghost_precmd})
 
 if [[ -z $ZGHOST_NO_BINDINGS ]]; then
   () {
     local km
     for km in emacs viins; do
+      # Browse executed commands even when the current draft has no history
+      # match. Some shell frameworks bind these to prefix search instead.
       bindkey -M $km '^[[A' up-line-or-history '^[OA' up-line-or-history \
         '^[[B' down-line-or-history '^[OB' down-line-or-history
       bindkey -M $km '^[[C' zghost-accept '^[OC' zghost-accept \
@@ -397,6 +428,7 @@ if [[ -z $ZGHOST_NO_BINDINGS ]]; then
       '^[n' zghost-next '^[p' zghost-prev
   }
 
+  # Bind after shell frameworks have set up their own completion widgets.
   _zghost_bind_tab() {
     add-zsh-hook -d precmd _zghost_bind_tab
     local current=${${(z)"$(bindkey '^I')"}[2]}

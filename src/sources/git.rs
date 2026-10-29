@@ -10,13 +10,18 @@ const TTL: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Default)]
 struct Refs {
+    /// Local branches, most recently committed first.
     local: Vec<String>,
+    /// Remote branches with the remote name stripped (`origin/x` -> `x`).
     remote: Vec<String>,
     remotes: Vec<String>,
+    /// Tags, newest first.
     tags: Vec<String>,
+    /// Checked-out branch; empty when detached or outside a repo.
     current: String,
 }
 
+/// Branch and remote names for git subcommands that take them.
 #[derive(Default)]
 pub struct GitSource {
     cache: Mutex<Cache<(Instant, Arc<Refs>)>>,
@@ -123,6 +128,8 @@ impl SuggestionSource for GitSource {
         ctx.ranked_words(words.iter().map(String::as_str), "", 0.6, "git")
     }
 
+    /// `git checkout release-9.0.0` from another repo's history is noise
+    /// here: drop it unless the target is a ref, commit or file in this repo.
     fn rejects(&self, ctx: &Context, text: &str) -> bool {
         if !text.contains("checkout") && !text.contains("switch") {
             return false;
@@ -133,6 +140,7 @@ impl SuggestionSource for GitSource {
         if line.command() != Some("git")
             || pos.len() != 1
             || !matches!(pos[0], "checkout" | "switch")
+            // -b/-c create a branch; `--` restores files.
             || line.words.iter().any(|w| w.value.starts_with('-'))
             || target.is_empty()
             || target.contains(['~', '^', '@', ':', '$'])
@@ -142,7 +150,7 @@ impl SuggestionSource for GitSource {
         }
         let refs = self.refs(&ctx.cwd);
         if refs.local.is_empty() && refs.remote.is_empty() {
-            return false;
+            return false; // Not a repo, or refs unavailable: don't guess.
         }
         let remote_ref = target.split_once('/').is_some_and(|(r, b)| {
             refs.remotes.iter().any(|x| x == r) && refs.remote.iter().any(|x| x == b)
@@ -156,6 +164,8 @@ impl SuggestionSource for GitSource {
         !(known || remote_ref || ctx.cwd.join(target).exists())
     }
 
+    /// `git push [-u] origin old-branch` from history becomes a push of the
+    /// branch that is checked out now.
     fn rewrite(&self, ctx: &Context, text: &str) -> Option<String> {
         if !text.contains("git") || !text.contains("push") {
             return None;
@@ -248,7 +258,7 @@ mod tests {
 
         run(&["commit", "-q", "--allow-empty", "-m", "init"]);
         run(&["tag", "1.5.2"]);
-        let src = GitSource::default();
+        let src = GitSource::default(); // fresh ref cache
         assert!(src.rejects(&ctx, "git checkout release-9.0.0"));
         assert!(src.rejects(&ctx, "git checkout release-9.0.0 "));
         assert!(!src.rejects(&ctx, "git checkout feature/login"));

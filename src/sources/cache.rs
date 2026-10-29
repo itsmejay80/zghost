@@ -1,3 +1,4 @@
+//! Bounded caches for reloadable directory/project data, never learned history.
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;

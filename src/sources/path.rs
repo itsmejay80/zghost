@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 const PATH_TTL: Duration = Duration::from_secs(60);
 const MAX_DIR_ENTRIES: usize = 2000;
 
+/// Executables on `$PATH`, offered while typing the command word.
 #[derive(Default)]
 pub struct ExecutableSource {
     cache: Mutex<Option<(Instant, Arc<Vec<String>>)>>,
@@ -34,6 +35,7 @@ impl ExecutableSource {
             })
             .filter_map(|e| e.file_name().into_string().ok())
             .collect();
+        // Shorter names first: `git` before `git-lfs`.
         names.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
         names.dedup();
         let names = Arc::new(names);
@@ -57,6 +59,7 @@ impl SuggestionSource for ExecutableSource {
     }
 }
 
+/// File and directory names for path-like words and file-taking commands.
 pub struct FileSource;
 
 const FILE_COMMANDS: &[&str] = &[
@@ -131,6 +134,8 @@ impl SuggestionSource for FileSource {
                 {
                     return None;
                 }
+                // Directory entries usually carry their type already. Follow
+                // symlinks as before, and retain the metadata fallback.
                 let is_dir = e
                     .file_type()
                     .ok()
@@ -179,6 +184,7 @@ mod tests {
     #[test]
     fn executable_cache_shares_names_until_expiry() {
         let src = ExecutableSource::default();
+        // Seed directly to keep the test independent of the user's PATH.
         let names = Arc::new(vec!["tool".to_string()]);
         *src.cache.lock().unwrap() = Some((Instant::now(), names.clone()));
         assert!(Arc::ptr_eq(&names, &src.executables()));

@@ -4,6 +4,8 @@ mod flags;
 pub(crate) use flags::Value;
 use flags::{Flag, FLAGS};
 
+/// Built-in command specs: subcommands for popular tools, most common first.
+/// Keys are the command plus any already-typed subcommands.
 const SPECS: &[(&str, &[&str])] = &[
     (
         "gh",
@@ -418,6 +420,7 @@ impl SuggestionSource for SpecSource {
                 _ => Vec::new(),
             };
         }
+        // `--` ends option parsing even when the next word starts with a dash.
         let options_ended = ctx
             .line
             .words
@@ -461,6 +464,7 @@ impl SuggestionSource for SpecSource {
     }
 }
 
+/// Active option metadata includes inherited global options.
 fn active_flags(key: &str) -> impl Iterator<Item = &'static Flag> + '_ {
     FLAGS.iter().filter(move |f| {
         key == f.scope
@@ -474,6 +478,8 @@ fn find_flag(key: &str, name: &str) -> Option<&'static Flag> {
     active_flags(key).find(|f| f.names.split_whitespace().any(|n| n == name))
 }
 
+/// Classify completed arguments, respecting option values and `--`.
+/// The pending flag (if any) describes the word currently being typed.
 pub(crate) fn arguments(line: &ParsedLine) -> (Vec<&str>, Option<&'static Flag>) {
     let Some(index) = line.command else {
         return (Vec::new(), None);
@@ -509,6 +515,7 @@ pub(crate) fn arguments(line: &ParsedLine) -> (Vec<&str>, Option<&'static Flag>)
     (pos, pending)
 }
 
+/// Path-valued options are shared with the file source.
 pub(crate) fn path_value(line: &ParsedLine) -> Option<Value> {
     let (pos, pending) = arguments(line);
     let key = std::iter::once(line.command()?)

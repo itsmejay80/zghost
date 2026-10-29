@@ -1,3 +1,5 @@
+//! Isolated, synthetic hot-path probe: cargo run --release --example performance
+//! Allocated bytes measure allocation traffic, not resident memory (RSS).
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::os::unix::fs::PermissionsExt;
@@ -30,6 +32,7 @@ fn main() {
         std::fs::write(&path, "").unwrap();
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
+    // Only this probe's environment is changed; no user files/history are read.
     std::env::set_var("PATH", dir.path());
     let executable = ExecutableSource::default();
     for (name, source, buffer, fuzzy) in [

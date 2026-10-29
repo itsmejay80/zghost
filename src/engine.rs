@@ -1,3 +1,4 @@
+//! Runs every enabled source, merges candidates and ranks them.
 
 use crate::config::Config;
 use crate::parser;
@@ -22,6 +23,7 @@ pub struct Ranked {
 #[derive(Debug, Clone)]
 pub struct Completion {
     pub text: String,
+    /// Character offset, as used by ZLE (not a UTF-8 byte offset).
     pub cursor: usize,
 }
 
@@ -30,6 +32,7 @@ pub struct Engine {
     history: Arc<RwLock<HistoryIndex>>,
     sources: Vec<Box<dyn SuggestionSource>>,
     store: Option<Mutex<Store>>,
+    /// Session id (shell pid) -> last command it ran.
     sessions: Mutex<HashMap<String, String>>,
 }
 
@@ -41,6 +44,7 @@ pub fn now() -> i64 {
 }
 
 impl Engine {
+    /// Engine with every source, backed by the on-disk store.
     pub fn open(config: Config, store: Store) -> Result<Self> {
         let index = store.load()?;
         let mut engine = Self::with_index(config, index, true);
@@ -48,6 +52,7 @@ impl Engine {
         Ok(engine)
     }
 
+    /// In-memory engine with only the history source (used by `bench`).
     pub fn history_only(config: Config) -> Self {
         Self::with_index(config, HistoryIndex::default(), false)
     }
@@ -88,6 +93,7 @@ impl Engine {
         self.suggest_at(buffer, cwd, session, limit, now())
     }
 
+    /// `suggest` with an explicit clock, so `bench` can replay old history.
     pub fn suggest_at(
         &self,
         buffer: &str,
@@ -99,6 +105,7 @@ impl Engine {
         self.query(buffer, cwd, session, limit, now, false)
     }
 
+    /// Complete the word at a UTF-8 byte cursor, retaining everything after it.
     pub fn complete(
         &self,
         buffer: &str,
@@ -146,6 +153,7 @@ impl Engine {
         now: i64,
         fuzzy: bool,
     ) -> Vec<Ranked> {
+        // An empty prompt gets a next-command prediction, from history only.
         if !buffer.is_empty() && buffer.trim().is_empty() {
             return Vec::new();
         }
@@ -180,6 +188,7 @@ impl Engine {
                     score: 0.0,
                     sources: Vec::new(),
                 });
+                // Noisy-OR: agreement between sources raises confidence.
                 r.score = 1.0 - (1.0 - r.score) * (1.0 - p);
                 if !r.sources.contains(&s.source) {
                     r.sources.push(s.source);
@@ -188,6 +197,9 @@ impl Engine {
         }
 
         let mut ranked: Vec<Ranked> = merged.into_values().collect();
+        // A history line extending a context completion (`git log` ->
+        // `git log --oneline`) is the more specific answer, so it inherits
+        // the support of the best such prefix.
         let context: Vec<(String, f64)> = ranked
             .iter()
             .filter(|r| !r.sources.contains(&"history"))
@@ -215,6 +227,8 @@ impl Engine {
         ranked
     }
 
+    /// Let every source adapt a candidate; keeps it only if it still
+    /// extends what was typed.
     fn rewrite(&self, ctx: &Context, text: &str) -> Option<String> {
         self.sources
             .iter()
@@ -222,6 +236,7 @@ impl Engine {
             .filter(|t| t.len() > ctx.buffer.len() && t.starts_with(&ctx.buffer))
     }
 
+    /// Pretend `session` just ran `command`, without recording it.
     pub fn set_previous(&self, session: &str, command: &str) {
         self.sessions
             .lock()
@@ -260,6 +275,8 @@ impl Engine {
         }
     }
 
+    /// One-time import of an existing Zsh history file. Returns how many
+    /// commands were imported, or `None` if an import already happened.
     pub fn import_histfile(&self, path: &Path) -> Result<Option<usize>> {
         let Some(store) = &self.store else {
             return Ok(None);

@@ -24,9 +24,11 @@ bindkey -{mode}
 autoload -Uz up-line-or-beginning-search down-line-or-beginning-search
 zle -N up-line-or-beginning-search
 zle -N down-line-or-beginning-search
+# Reproduce the prefix-search bindings installed by shell frameworks.
 bindkey '{prefix}A' up-line-or-beginning-search
 bindkey '{prefix}B' down-line-or-beginning-search
 source '{PLUGIN}'
+# Keep the test independent of the daemon and the user's history database.
 _zghost_send() {{ return 0 }}
 _zghost_request() {{ _zghost_candidates=('echo predicted'); _zghost_index=1 }}
 print -s 'echo oldest'
@@ -54,6 +56,7 @@ _capture
 
                 wait_for("")
                 for draft in ("", "draft"):
+                    # Test empty-prompt prediction and a nonmatching draft.
                     os.write(fd, draft.encode())
                     wait_for(draft)
                     for suffix, expected in [

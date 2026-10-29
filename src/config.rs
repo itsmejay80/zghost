@@ -2,10 +2,13 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// User configuration, read from `~/.config/zghost/config.json`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// How many ranked candidates are sent to the shell (cycled with Alt-n/Alt-p).
     pub max_suggestions: usize,
+    /// Per-source multiplier applied to each source's confidence.
     pub weights: HashMap<String, f64>,
     pub disabled_sources: Vec<String>,
     pub history: HistoryConfig,
@@ -14,18 +17,29 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct HistoryConfig {
+    /// Weight of ln(1 + times used).
     pub frequency_weight: f64,
+    /// Long-term recency halves every this many days.
     pub half_life_days: f64,
     pub recency_weight: f64,
+    /// Short-term recency ("I just ran this") halves every this many minutes.
     pub short_half_life_minutes: f64,
     pub short_recency_weight: f64,
+    /// Extra weight for commands previously run in the current directory.
     pub directory_boost: f64,
+    /// Extra weight for commands that usually follow the previous command.
     pub sequence_boost: f64,
+    /// Weight of P(next shape | previous shape), e.g. `git push` after any
+    /// `git commit`. See `sources::history::shape`.
     pub shape_sequence_boost: f64,
+    /// Recency by position in the command stream ("3 commands ago").
     pub order_recency_weight: f64,
     pub order_half_life: f64,
+    /// Empty-prompt prediction needs the previous shape seen this many times
+    /// and the predicted shape to follow it at least this often.
     pub next_min_observations: u32,
     pub next_min_probability: f64,
+    /// Multiplier for commands that mostly fail.
     pub failure_penalty: f64,
 }
 

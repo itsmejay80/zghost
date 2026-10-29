@@ -1,3 +1,4 @@
+//! Option metadata shared by suggestions and argument classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Value {
     None,

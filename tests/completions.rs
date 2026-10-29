@@ -82,7 +82,7 @@ fn fuzzy_candidates_replace_words_and_stay_out_of_ghost_text() {
     assert!(completions(&e, cwd, "git ckt").contains(&"git checkout ".into()));
     assert!(completions(&e, cwd, "cat mn").contains(&"cat my\\ notes.md ".into()));
     assert!(completions(&e, cwd, "git ch")[0].starts_with("git ch"));
-    assert!(completions(&e, cwd, "git co f").is_empty());
+    assert!(completions(&e, cwd, "git co f").is_empty()); // no alias feature
 }
 
 #[test]

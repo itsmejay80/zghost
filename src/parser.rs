@@ -1,14 +1,25 @@
+//! A small, allocation-light shell lexer.
+//!
+//! It only needs to answer "which simple command is being typed, and which
+//! word is under the cursor", so it handles quoting, escapes and command
+//! separators but makes no attempt at full Zsh grammar.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Word {
+    /// Text exactly as typed, including quotes and backslashes.
     pub raw: String,
+    /// Text after quote removal.
     pub value: String,
+    /// Byte offset of the word in the buffer.
     pub start: usize,
 }
 
 #[derive(Debug, Clone)]
 pub struct ParsedLine {
+    /// Words of the last simple command. The final word is the one being
+    /// typed; it is empty when the buffer ends in whitespace.
     pub words: Vec<Word>,
+    /// Index of the command word, after skipping `sudo`, `FOO=bar`, etc.
     pub command: Option<usize>,
 }
 
@@ -120,6 +131,7 @@ fn is_assignment(word: &str) -> bool {
     }
 }
 
+/// End of the cursor's shell word, accounting for quoting and escapes.
 pub fn word_end(buffer: &str, start: usize, cursor: usize) -> usize {
     let mut quote = None;
     let mut escaped = false;
@@ -155,6 +167,7 @@ impl ParsedLine {
         self.words.len() - 1
     }
 
+    /// The command word, once the user has moved past it.
     pub fn command(&self) -> Option<&str> {
         self.command
             .filter(|&i| i < self.current_index())
@@ -165,6 +178,7 @@ impl ParsedLine {
         self.command == Some(self.current_index())
     }
 
+    /// Non-flag arguments between the command and the current word.
     pub fn positionals(&self) -> Vec<&str> {
         match self.command {
             Some(i) if i < self.current_index() => crate::sources::specs::arguments(self).0,
@@ -172,11 +186,13 @@ impl ParsedLine {
         }
     }
 
+    /// Byte offset where the last simple command begins.
     pub fn segment_start(&self) -> usize {
         self.words[0].start
     }
 }
 
+/// Backslash-escape a value so it can be inserted as a single shell word.
 pub fn shell_escape(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for c in value.chars() {

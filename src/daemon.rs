@@ -1,3 +1,5 @@
+//! Unix-socket server. One thread per connected shell; requests are
+//! line-delimited (see `protocol`).
 
 use crate::engine::{now, Engine};
 use crate::protocol::{format_reply, parse_request, Request};
@@ -14,6 +16,7 @@ pub fn serve(socket: &Path, engine: Arc<Engine>) -> Result<()> {
         }
         std::fs::remove_file(socket)?;
     }
+    // Only the owner may connect: the socket exposes command history.
     let listener = unsafe {
         let old = libc::umask(0o077);
         let l = UnixListener::bind(socket);
